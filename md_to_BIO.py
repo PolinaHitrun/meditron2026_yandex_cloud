@@ -100,9 +100,6 @@ def find_entities(text):
     return sorted(resolved, key=lambda e: e["start"])
 
 def to_label_studio_task(doc_id, text, entities):
-    """
-    Формирует одну задачу для импорта в Label Studio.
-    """
     spans = []
     for ent in entities:
         spans.append({
@@ -132,9 +129,6 @@ def to_label_studio_task(doc_id, text, entities):
     }
 
 def process_directory(input_dir, output_ls_json):
-    """
-    Обрабатывает все .md/.txt в input_dir и создает один JSON для Label Studio.
-    """
     ls_tasks = []
     counter = 1
 
