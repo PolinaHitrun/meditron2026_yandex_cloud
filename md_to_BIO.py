@@ -75,31 +75,21 @@ ABBREVIATIONS = dict(
 )
 
 PATTERNS = {
-    "DATE": r"\b\d{2}\s*\.\s*\d{2}\s*\.\s*\d{4}(?!\d)",
-    "BP": r"(?<=артериальное давление[\s:\-=]{0,5})\d{2,3}\s*/\s*\d{2,3}",
-    "BPM": (
-        r"(?<=частота сердечных сокращений[\s:\-=]{0,5})\d{2,3}"
-        r"|(?<=пульс[\s:\-=]{0,5})\d{2,3}"
-    ),
-    "KILLIP": r"Killip\s*(?:IV|III|II|I)(?!\w)",
+    "DATE":   (r"\b\d{2}\s*\.\s*\d{2}\s*\.\s*\d{4}(?!\d)", 0),
+    "BP":     (r"артериальное давление[\s:\-=]{0,5}(\d{2,3}\s*/\s*\d{2,3})", 1),
+    "BPM":    (r"(?:частота сердечных сокращений|пульс)[\s:\-=]{0,5}(\d{2,3})", 1),
+    "KILLIP": (r"Killip\s*(?:IV|III|II|I)(?!\w)", 0),
 }
-
-def expand_abbreviations(text):
-    for abbr, full in ABBREVIATIONS.items():
-        pattern = re.escape(abbr)
-        pattern = rf"(?<![А-Яа-яA-Za-z]){pattern}(?![А-Яа-яA-Za-z])"
-        text = re.sub(pattern, full, text)
-    return text
 
 def convert_to_bio(text):
     text = expand_abbreviations(text)
 
     entities = []
-    for label, pattern in PATTERNS.items():
+    for label, (pattern, group) in PATTERNS.items():
         for match in re.finditer(pattern, text, re.IGNORECASE):
             entities.append({
-                "start": match.start(),
-                "end": match.end(),
+                "start": match.start(group),
+                "end": match.end(group),
                 "label": label,
             })
     
