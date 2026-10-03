@@ -1,7 +1,6 @@
 import os
+import json
 import re
-from razdel import tokenize
-
 
 ABBREVIATIONS = {
     "ХС-ЛПНП": "холестерин липопротеинов низкой плотности",
@@ -85,50 +84,43 @@ def expand_abbreviations(text):
     return text
 
 
-def convert_to_bio(text):
-    text = expand_abbreviations(text)
-
-    entities = []
-    for label, (pattern, group) in PATTERNS.items():
-        for match in re.finditer(pattern, text, re.IGNORECASE):
-            entities.append({
-                "start": match.start(group),
-                "end": match.end(group),
-                "label": label,
-            })
-
-    tokens = list(tokenize(text))
-    bio_output = []
-    for token in tokens:
-        current_tag = "O"
-        for ent in entities:
-            if token.start >= ent["start"] and token.stop <= ent["end"]:
-                if token.start == ent["start"]:
-                    current_tag = f"B-{ent['label']}"
-                else:
-                    current_tag = f"I-{ent['label']}"
-                break
-        bio_output.append(f"{token.text}\t{current_tag}")
-    return "\n".join(bio_output)
-
-
-def process_directory(input_dir, output_dir):
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-
+def process_directory_to_ls_json(input_dir, output_file):
+    tasks = []
+    
     for filename in os.listdir(input_dir):
         if filename.endswith(".md") or filename.endswith(".txt"):
             filepath = os.path.join(input_dir, filename)
-            with open(filepath, "r", encoding="utf-8") as f:
-                text = f.read()
+            with open(filepath, 'r', encoding='utf-8') as f:
+                raw_text = f.read()
+            
+            # Применяем словарь сокращений к сырому тексту
+            text = expand_abbreviations(raw_text)
+            
+            results = []
+            for label, (pattern, group_idx) in PATTERNS.items():
+                for match in re.finditer(pattern, text, re.IGNORECASE):
+                    results.append({
+                        "from_name": "label",
+                        "to_name": "text",
+                        "type": "labels",
+                        "value": {
+                            "start": match.start(group_idx),
+                            "end": match.end(group_idx),
+                            "text": match.group(group_idx),
+                            "labels": [label]
+                        }
+                    })
+            
+            tasks.append({
+                "data": {"text": text},
+                "predictions": [{
+                    "model_version": "regex_with_abbr",
+                    "result": results
+                }]
+            })
 
-            bio_text = convert_to_bio(text)
-
-            output_filename = filename.rsplit(".", 1)[0] + ".conll"
-            output_filepath = os.path.join(output_dir, output_filename)
-
-            with open(output_filepath, "w", encoding="utf-8") as out_f:
-                out_f.write(bio_text)
+    with open(output_file, 'w', encoding='utf-8') as f:
+        json.dump(tasks, f, ensure_ascii=False, indent=2)
 
 
-process_directory("participant-kit-realistic-v2-100/documents", "ready_for_annotation")
+process_directory_to_ls_json("participant-kit-realistic-v2-100/documents", "label_studio_import.json")
