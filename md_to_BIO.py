@@ -138,14 +138,6 @@ ABBREVIATIONS = dict(
     sorted(ABBREVIATIONS.items(), key=lambda x: -len(x[0]))
 )
 
-
-# ============================================================
-# ПАТТЕРНЫ
-# Формат: label -> (pattern, group)
-#   group = 0 — размечаем всё совпадение (для BIO)
-#   group = 1 — размечаем только группу (для BIO)
-# Для evidence сохраняем match_start/match_end всего совпадения.
-# ============================================================
 PATTERNS = {
     "ADMISSION_DATE": (
         r"(?:Поступил[а]?|Дата госпитализации|дата госпитализации)"
@@ -180,10 +172,6 @@ PATTERNS = {
     ),
 }
 
-
-# ============================================================
-# НОРМАЛИЗАЦИЯ
-# ============================================================
 def normalize_decimal_commas(text):
     """4,6 → 4.6 (только между цифрами)."""
     return re.sub(r"(\d),(\d)", r"\1.\2", text)
@@ -205,11 +193,7 @@ def expand_abbreviations(text):
         pattern = rf"(?<![А-Яа-яA-Za-z]){pattern}(?![А-Яа-яA-Za-z])"
         text = re.sub(pattern, full, text)
     return text
-
-
-# ============================================================
-# ПОИСК СУЩНОСТЕЙ
-# ============================================================
+    
 def find_entities(text):
     """
     Возвращает список сущностей с координатами в text.
@@ -351,7 +335,6 @@ def process_directory(input_dir, output_conll_dir, output_json_dir, ls_tasks_pat
         expanded_text, entities, bio_lines = process_document(original_text)
         base_name = filename.rsplit(".", 1)[0]
 
-        # 1) CoNLL для Label Studio / обучения NER
         with open(
             os.path.join(output_conll_dir, base_name + ".conll"),
             "w", encoding="utf-8",
