@@ -3,7 +3,7 @@ import json
 import time
 from yandex_cloud_ml_sdk import YCloudML
 
-API_KEY = "AQVNzsXBG5PCYJZLuptVrOquoe8yE2-HwyT-SiY2"
+API_KEY = "API_KEY"  # Замените на ваш реальный API ключ
 FOLDER_ID = "b1gb9i2f4erdrpnpmljk"
 
 # Инициализация SDK клиента
