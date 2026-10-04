@@ -1,104 +1,159 @@
-import os
 import json
+import os
+from dotenv import load_dotenv
+from pathlib import Path
+import sys
 import time
 from yandex_cloud_ml_sdk import YCloudML
+from yandex_ai_studio_sdk.auth import APIKeyAuth
 
-API_KEY = "API_KEY"  # Замените на ваш реальный API ключ
-FOLDER_ID = "b1gb9i2f4erdrpnpmljk"
+load_dotenv()
 
-# Инициализация SDK клиента
-sdk = YCloudML(
-    folder_id=FOLDER_ID,
-    auth=API_KEY,
-)
+ROOT_DIR = Path(__file__).resolve().parent.parent
+sys.path.append(str(ROOT_DIR))
+from md_to_BIO import expand_abbreviations
 
-def generate_labels_with_llm(text, prompt):
-    # Выбор и настройка модели
-    model = sdk.models.completions("gpt://b1gb9i2f4erdrpnpmljk/gpt-oss-20b/latest").configure(
-        temperature=0.1,
-        max_tokens=2000
+CURRENT_DIR = Path(__file__).resolve().parent
+INPUT_DIR = ROOT_DIR / "participant-kit-realistic-v2-100" / "documents"
+ETALON_FILE = CURRENT_DIR / "few_shot_etalon.json"
+OUTPUT_DIR = CURRENT_DIR / "llm_annotated_jsons"
+
+# Имена файлов, которые уже размечены вручную (эталоны)
+ETALON_FILENAMES = {"train-0001.md", "train-0021.md"}
+
+sdk = YCloudML(folder_id=os.getenv("FOLDER_ID"), auth=APIKeyAuth(api_key=os.getenv("API_KEY")))
+
+with open(ETALON_FILE, "r", encoding="utf-8") as f:
+  etalons = json.load(f)
+
+PROMPT = f"""Ты — опытный медицинский аналитик. Твоя задача — извлекать именованные сущности и клинические параметры из выписных эпикризов пациентов с острым коронарным синдромом.
+
+КРИТИЧЕСКИ ВАЖНОЕ ПРАВИЛО: 
+Ты должен возвращать ТОЛЬКО точные подстроки из оригинального текста. Буква в букву. 
+Категорически запрещено: 
+- менять падежи или окончания слов;
+- исправлять опечатки врачей;
+- убирать знаки препинания, если они входят в состав термина в тексте;
+- придумывать или вычислять значения.
+
+Верни результат в формате валидного JSON, где ключи — это классы сущностей, а значения — списки найденных в тексте подстрок. Если ни одной сущности определенного класса в тексте нет, просто не включай этот ключ в итоговый JSON.
+
+Пример 1:
+Текст эпикриза:
+{etalons[0]["text"]}
+
+Ожидаемый ответ:
+{json.dumps(etalons[0]["entities"], ensure_ascii=False)}
+
+Пример 2:
+Текст эпикриза:
+{etalons[1]["text"]}
+
+Ожидаемый ответ:
+{json.dumps(etalons[1]["entities"], ensure_ascii=False)}
+"""
+
+
+def generate_labels(text):
+  model = sdk.models.completions("yandexgpt").configure(
+      temperature=0.1, max_tokens=2000
+  )
+
+  messages = [
+      {"role": "system", "text": PROMPT},
+      {"role": "user", "text": text},
+  ]
+
+  try:
+    result = model.run(messages)
+    result_text = result[0].text
+
+    start_idx = result_text.find("{")
+    end_idx = result_text.rfind("}") + 1
+    if start_idx != -1 and end_idx != 0:
+      return json.loads(result_text[start_idx:end_idx])
+    else:
+      print("JSON не найден в ответе.")
+      return {}
+
+  except json.JSONDecodeError:
+    print("Ошибка парсинга JSON.")
+    return {}
+  except Exception as e:
+    print(f"Ошибка API: {e}")
+    return {}
+
+
+def process_corpus():
+  os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+  filenames = sorted(os.listdir(INPUT_DIR))
+
+  for filename in filenames:
+    if not (filename.endswith(".txt") or filename.endswith(".md")):
+      continue
+
+    # 1. Пропускаем эталонные файлы
+    if filename in ETALON_FILENAMES:
+      print(f"Пропуск эталона: {filename}")
+      continue
+
+    out_filepath = os.path.join(
+        OUTPUT_DIR, filename.replace(".md", ".json").replace(".txt", ".json")
     )
-    
-    messages = [
-        {"role": "system", "text": prompt},
-        {"role": "user", "text": text}
-    ]
-    
-    try:
-        # Синхронный запуск генерации
-        result = model.run(messages)
-        result_text = result[0].text
-        
-        # Пытаемся распарсить JSON, отрезая возможный текст до и после
-        start_idx = result_text.find('{')
-        end_idx = result_text.rfind('}') + 1
-        if start_idx != -1 and end_idx != 0:
-            json_str = result_text[start_idx:end_idx]
-            return json.loads(json_str)
-        else:
-            print("В ответе модели не найден JSON.")
-            return {}
-            
-    except json.JSONDecodeError:
-        print("Ошибка парсинга JSON от модели.")
-        return {}
-    except Exception as e:
-        print(f"Ошибка при обращении к API: {e}")
-        return {}
 
-def create_dataset_with_llm(input_dir, output_dir, prompt_template):
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    # 2. Пропускаем уже сгенерированные файлы (на случай рестарта при обрыве сети)
+    if os.path.exists(out_filepath):
+      print(f"Уже обработан: {filename}")
+      continue
 
-    for filename in os.listdir(input_dir):
-        if filename.endswith(".txt") or filename.endswith(".md"):
-            # Пропускаем уже размеченные файлы (эталоны)
-            if filename in ["train-0001.md", "train-0021.md"]:
-                 continue
+    filepath = os.path.join(INPUT_DIR, filename)
+    with open(filepath, "r", encoding="utf-8") as f:
+      raw_text = f.read()
 
-            filepath = os.path.join(input_dir, filename)
-            with open(filepath, "r", encoding="utf-8") as f:
-                raw_text = f.read()
+    expanded_text = expand_abbreviations(raw_text)
 
-            print(f"Обработка файла: {filename}")
-            
-            # В идеале здесь нужно применить expand_abbreviations(raw_text)
-            
-            # Запускаем LLM
-            llm_result = generate_labels_with_llm(raw_text, prompt_template)
-            
-            # Скрининг: оставляем только те подстроки, которые реально есть в тексте
-            verified_entities = []
-            for label, substrings in llm_result.items():
-                for substring in substrings:
-                    if substring in raw_text:
-                        # Находим все вхождения подстроки в тексте
-                        start_idx = 0
-                        while True:
-                            start_idx = raw_text.find(substring, start_idx)
-                            if start_idx == -1:
-                                break
-                            verified_entities.append({
-                                "start": start_idx,
-                                "end": start_idx + len(substring),
-                                "label": label,
-                                "text": substring
-                            })
-                            start_idx += len(substring)
-            
-            # Сохраняем результат в формате Label Studio для последующей конвертации
-            task_format = {
-                "data": {"text": raw_text},
-                "annotations": [{"result": [{"value": ent, "type": "labels"} for ent in verified_entities]}]
-            }
-            
-            out_filepath = os.path.join(output_dir, filename.replace(".md", ".json"))
-            with open(out_filepath, "w", encoding="utf-8") as f:
-                json.dump([task_format], f, ensure_ascii=False, indent=2)
-            
-            # Обязательная задержка для соблюдения лимитов API Yandex Cloud (обычно 1 RPS)
-            time.sleep(1.5)
+    print(f"Генерация для: {filename}")
+    llm_result = generate_labels(expanded_text)
 
-# Пример запуска:
-# prompt = "Тот самый длинный текст с примерами..."
-# create_dataset_with_llm("participant-kit-realistic-v2-100/documents", "llm_annotated_folder", prompt)
+    verified_entities = []
+    if isinstance(llm_result, dict):
+      for label, substrings in llm_result.items():
+        if not isinstance(substrings, list):
+          continue
+        for substring in substrings:
+          # Защита от пустых строк и не-строк
+          if not isinstance(substring, str) or not substring.strip():
+            continue
+
+          if substring in expanded_text:
+            start_idx = 0
+            while True:
+              start_idx = expanded_text.find(substring, start_idx)
+              if start_idx == -1:
+                break
+              verified_entities.append({
+                  "start": start_idx,
+                  "end": start_idx + len(substring),
+                  "text": substring,
+                  "labels": [label],  # Важно: список 'labels', а не 'label'
+              })
+              start_idx += len(substring)
+
+    task_format = {
+        "data": {"text": expanded_text},
+        "annotations": [{
+            "result": [
+                {"value": ent, "type": "labels"} for ent in verified_entities
+            ]
+        }],
+    }
+
+    with open(out_filepath, "w", encoding="utf-8") as f:
+      json.dump([task_format], f, ensure_ascii=False, indent=2)
+
+    time.sleep(1.5)
+
+
+if __name__ == "__main__":
+  process_corpus()
