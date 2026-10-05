@@ -130,12 +130,12 @@ def main():
     files = sorted(INPUT_DIR.glob("*.md"))
 
     if not files:
-        print(f"❌ Не найдено .md файлов в {INPUT_DIR}/")
+        print(f"Не найдено .md файлов в {INPUT_DIR}/")
         return
 
-    print(f"📂 Найдено документов: {len(files)}")
-    print(f"📄 Первый: {files[0].name}")
-    print(f"📄 Последний: {files[-1].name}")
+    print(f"Найдено документов: {len(files)}")
+    print(f"Первый: {files[0].name}")
+    print(f"Последний: {files[-1].name}")
     print()
 
     start = time.perf_counter()
@@ -147,11 +147,11 @@ def main():
                 print(f"  [{i}/{len(files)}] {md_path.name}")
         except Exception as e:
             log_error(md_path.stem, "process_one", e, {"file": str(md_path)})
-            print(f"  ❌ {md_path.name}: {e}")
+            print(f"{md_path.name}: {e}")
 
     elapsed = time.perf_counter() - start
-    print(f"\n✅ Готово за {elapsed:.2f} сек")
-    print(f"💾 Файл: {LOG_PATH}")
+    print(f"\nГотово за {elapsed:.2f} сек")
+    print(f"Файл: {LOG_PATH}")
 
 
 if __name__ == "__main__":

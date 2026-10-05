@@ -27,11 +27,9 @@ from razdel import sentenize
 
 INPUT_DIR = Path("input")
 RESULT_DIR = Path("result")
-MODEL_PATH = Path("final_medical_ner_model") # Путь к обученному BERT
+MODEL_PATH = Path("final_medical_ner_model")
 
-# ------------------------------------------------------------
 # Настройки ML NER
-# ------------------------------------------------------------
 
 BINARY_KEYS = {"art_hyper", "atr_fibril", "copd", "dm", "tlt", "ecg_avb", "ecg_elevation"}
 
@@ -119,7 +117,7 @@ def format_ner_value(key: str, raw_text: str) -> str:
 
 def load_ner_pipeline():
     if not MODEL_PATH.exists():
-        print(f"⚠️ ОШИБКА: Модель NER не найдена по пути {MODEL_PATH}")
+        print(f"Модель NER не найдена по пути {MODEL_PATH}")
         return None
         
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
@@ -133,9 +131,7 @@ def load_ner_pipeline():
         device=device
     )
 
-# ------------------------------------------------------------
 # Сборка итогового JSON
-# ------------------------------------------------------------
 
 def _default_value(field_type: str) -> str:
     """Значение по умолчанию для пустого поля, по типу из SCHEMA."""
@@ -167,9 +163,7 @@ def build_doc_json(extracted: dict[str, dict]) -> dict:
 
     return payload
 
-# ------------------------------------------------------------
 # Обработка одного документа
-# ------------------------------------------------------------
 
 def process_one(md_path: Path, out_dir: Path, ner_pipe) -> dict:
     """Читает, сегментирует, экстрактит, добирает через NER, пишет JSON."""
@@ -216,7 +210,7 @@ def process_one(md_path: Path, out_dir: Path, ner_pipe) -> dict:
     payload = build_doc_json(extracted)
     metrics["build_ms"] = int((time.perf_counter() - t3) * 1000)
 
-    # 5. ML NER (Добираем то, что упустили регулярки)
+    # 5. ML NER
     t_ner = time.perf_counter()
     if ner_pipe:
         for sentence in sentenize(text):
@@ -261,23 +255,21 @@ def process_one(md_path: Path, out_dir: Path, ner_pipe) -> dict:
 
     return {"doc": doc_name, "out_path": str(out_path), **metrics}
 
-# ------------------------------------------------------------
 # Пакетный прогон
-# ------------------------------------------------------------
 
 def run_all(input_dir: Path = INPUT_DIR, out_dir: Path = RESULT_DIR) -> list[dict]:
     files = sorted(input_dir.glob("*.md"))
     if not files:
-        print(f"❌ Не найдено .md в {input_dir}/")
+        print(f"Не найдено .md в {input_dir}/")
         return []
 
-    print(f"📂 Документов: {len(files)}")
-    print(f"🔧 Версии: dictionaries={DICTIONARIES_VERSION}, pipeline={PIPELINE_VERSION}")
+    print(f"Документов: {len(files)}")
+    print(f"Версии: dictionaries={DICTIONARIES_VERSION}, pipeline={PIPELINE_VERSION}")
     
-    print("🤖 Инициализация ML NER пайплайна...")
+    print("Инициализация ML NER пайплайна...")
     ner_pipe = load_ner_pipeline()
     if ner_pipe:
-        print("✅ Модель успешно загружена в память.")
+        print("Модель успешно загружена в память.")
     print()
 
     t_start = time.perf_counter()
@@ -290,12 +282,12 @@ def run_all(input_dir: Path = INPUT_DIR, out_dir: Path = RESULT_DIR) -> list[dic
             if i % 10 == 0 or i == len(files):
                 print(f"  [{i}/{len(files)}] {md_path.name}")
         except Exception as e:
-            print(f"  ❌ {md_path.name}: {e}")
+            print(f"{md_path.name}: {e}")
 
     elapsed = time.perf_counter() - t_start
-    print(f"\n✅ Готово за {elapsed:.2f} сек")
-    print(f"💾 Результаты: {out_dir}/")
-    print(f"📊 Обработано: {len(results)}/{len(files)}")
+    print(f"\nГотово за {elapsed:.2f} сек")
+    print(f"Результаты: {out_dir}/")
+    print(f"Обработано: {len(results)}/{len(files)}")
 
     return results
 

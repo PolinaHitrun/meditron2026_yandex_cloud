@@ -24,9 +24,7 @@ INPUT_DIR = Path("input")
 RESULT_DIR = Path("result")
 
 
-# ------------------------------------------------------------
 # Сборка итогового JSON
-# ------------------------------------------------------------
 
 def _default_value(field_type: str) -> str:
     """Значение по умолчанию для пустого поля, по типу из SCHEMA."""
@@ -64,9 +62,7 @@ def build_doc_json(extracted: dict[str, dict]) -> dict:
     return payload
 
 
-# ------------------------------------------------------------
 # Обработка одного документа
-# ------------------------------------------------------------
 
 def process_one(md_path: Path, out_dir: Path) -> dict:
     """Читает, сегментирует, экстрактит, собирает, пишет JSON.
@@ -145,20 +141,18 @@ def process_one(md_path: Path, out_dir: Path) -> dict:
     return {"doc": doc_name, "out_path": str(out_path), **metrics}
 
 
-# ------------------------------------------------------------
 # Пакетный прогон
-# ------------------------------------------------------------
 
 def run_all(input_dir: Path = INPUT_DIR, out_dir: Path = RESULT_DIR) -> list[dict]:
     files = sorted(input_dir.glob("*.md"))
     if not files:
-        print(f"❌ Не найдено .md в {input_dir}/")
+        print(f"Не найдено .md в {input_dir}/")
         return []
 
-    print(f"📂 Документов: {len(files)}")
-    print(f"📄 Первый: {files[0].name}")
-    print(f"📄 Последний: {files[-1].name}")
-    print(f"🔧 Версии: dictionaries={DICTIONARIES_VERSION}, pipeline={PIPELINE_VERSION}")
+    print(f"Документов: {len(files)}")
+    print(f"Первый: {files[0].name}")
+    print(f"Последний: {files[-1].name}")
+    print(f"Версии: dictionaries={DICTIONARIES_VERSION}, pipeline={PIPELINE_VERSION}")
     print()
 
     t_start = time.perf_counter()
@@ -171,12 +165,12 @@ def run_all(input_dir: Path = INPUT_DIR, out_dir: Path = RESULT_DIR) -> list[dic
             if i % 10 == 0 or i == len(files):
                 print(f"  [{i}/{len(files)}] {md_path.name}")
         except Exception as e:
-            print(f"  ❌ {md_path.name}: {e}")
+            print(f"{md_path.name}: {e}")
 
     elapsed = time.perf_counter() - t_start
-    print(f"\n✅ Готово за {elapsed:.2f} сек")
-    print(f"💾 Результаты: {out_dir}/")
-    print(f"📊 Обработано: {len(results)}/{len(files)}")
+    print(f"\nГотово за {elapsed:.2f} сек")
+    print(f"Результаты: {out_dir}/")
+    print(f"Обработано: {len(results)}/{len(files)}")
 
     return results
 
