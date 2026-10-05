@@ -18,7 +18,7 @@ INPUT_DIR = ROOT_DIR / "participant-kit-realistic-v2-100" / "documents"
 ETALON_FILE = CURRENT_DIR / "few_shot_etalon.json"
 OUTPUT_DIR = CURRENT_DIR / "llm_annotated_jsons"
 
-# Имена файлов, которые уже размечены вручную (эталоны)
+# Имена файлов, которые уже размечены вручную
 ETALON_FILENAMES = {"train-0001.md", "train-0021.md"}
 
 sdk = YCloudML(folder_id=os.getenv("FOLDER_ID"), auth=APIKeyAuth(api_key=os.getenv("API_KEY")))

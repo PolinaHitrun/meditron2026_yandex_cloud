@@ -218,3 +218,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+final_medical_ner_model/
+medical_ner_model/
+*.safetensors
+*.pt
+*.bin
