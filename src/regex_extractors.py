@@ -1,4 +1,15 @@
-"""Regex-экстракторы под схему из кейса + negation detection."""
+"""Regex-экстракторы под схему из кейса + negation detection.
+
+Учтены ловушки синтетических эпикризов:
+- аббревиатуры (КДР ЛЖ, ЛП, ЛПНП, ИМТ, ХБП, ХОБЛ, ХСН, ЧСС, АВ-блокада)
+  заменяются полными формами;
+- даты могут задаваться через "Период лечения: с ... по ...";
+- rg_pc — с учётом отрицаний до и после фразы;
+- медикаменты — обрезается нумерация списка;
+- smoking — включая "Прекратил(а) курить";
+- card_trop — любое тире (—, –, -);
+- ca_date = "не указано" при ca_fact = R.
+"""
 
 import re
 
@@ -9,8 +20,9 @@ import re
 
 NEG_MARKERS = (
     r"(не\s+(выявлен|обнаружен|отмеча|подтвержд|установлен|зарегистрирован"
-    r"|провод|выполнял|применял|использовал|назначал|отмечен|определял)"
-    r"|отрица|отсутству|нет\b|без\b|не\s+наблюд|не\s+было)"
+    r"|провод|выполнял|применял|использовал|назначал|отмечен|определял"
+    r"|получен|зафиксирован)"
+    r"|отрица|отсутству|нет\b|без\b|не\s+наблюд|не\s+было|данных\s+за)"
 )
 
 
@@ -41,27 +53,68 @@ def has_positive(segment: str, keyword_pattern: str) -> str:
 
 
 # ============================================================
+# Утилиты
+# ============================================================
+
+def _to_float_str(raw: str) -> str:
+    """'27,4' -> '27.4'."""
+    return raw.replace(",", ".")
+
+
+def _clean_med_line(line: str) -> str:
+    """Убирает нумерацию списка и хвостовые служебные фразы."""
+    line = re.sub(r"^\s*(?:\d+[.)]\s*|[-–—•]\s*)", "", line).strip()
+    line = re.sub(
+        r"\s+(разъяснен\w*|уточня\w*|рекомендован\w*|обсужден\w*)\s*\.?\s*$",
+        "",
+        line,
+        flags=re.IGNORECASE,
+    )
+    return line.strip()
+
+
+# ============================================================
 # Экстракторы по группам
 # ============================================================
 
 def extract_dates(segment: str) -> dict:
     result = {"admission_date": "не указано", "discharge_date": "не указано"}
 
+    # 1. Поступил / Выписан
     m = re.search(r"(?i)поступил[а]?\s*:?\s*(\d{2}\.\d{2}\.\d{4})", segment)
     if m:
         result["admission_date"] = m.group(1)
-    else:
-        dates = re.findall(r"\b\d{2}\.\d{2}\.\d{4}\b", segment)
-        if len(dates) >= 2:
-            result["admission_date"] = dates[1]
 
     m = re.search(r"(?i)выписан[а]?\s*:?\s*(\d{2}\.\d{2}\.\d{4})", segment)
     if m:
         result["discharge_date"] = m.group(1)
-    else:
-        dates = re.findall(r"\b\d{2}\.\d{2}\.\d{4}\b", segment)
-        if len(dates) >= 3:
-            result["discharge_date"] = dates[2]
+
+    # 2. Дата госпитализации / Дата выписки
+    if result["admission_date"] == "не указано":
+        m = re.search(
+            r"(?i)дата\s+госпитализации\s*:?\s*(\d{2}\.\d{2}\.\d{4})", segment
+        )
+        if m:
+            result["admission_date"] = m.group(1)
+
+    if result["discharge_date"] == "не указано":
+        m = re.search(
+            r"(?i)дата\s+выписки\s*:?\s*(\d{2}\.\d{2}\.\d{4})", segment
+        )
+        if m:
+            result["discharge_date"] = m.group(1)
+
+    # 3. Период лечения: с DD.MM.YYYY по DD.MM.YYYY
+    if result["admission_date"] == "не указано" or result["discharge_date"] == "не указано":
+        m = re.search(
+            r"(?i)период\s+лечения\s*:?\s*с\s*(\d{2}\.\d{2}\.\d{4})\s+по\s+(\d{2}\.\d{2}\.\d{4})",
+            segment,
+        )
+        if m:
+            if result["admission_date"] == "не указано":
+                result["admission_date"] = m.group(1)
+            if result["discharge_date"] == "не указано":
+                result["discharge_date"] = m.group(2)
 
     return result
 
@@ -93,19 +146,23 @@ def extract_diagnosis(segment: str) -> dict:
         roman = {"I": "1", "II": "2", "III": "3", "IV": "4"}
         result["killip"] = roman[m.group(1)]
 
-    # ХБП — строка
-    m = re.search(r"(?i)(ХБП\s*\d[АБ]?)", segment)
+    # ХБП — полная форма или аббревиатура
+    m = re.search(
+        r"(?i)(?:ХБП|хроническ\w+\s+болезн\w+\s+почек)\s*(\d[АБ]?)",
+        segment,
+    )
     if m:
-        result["ckd"] = m.group(1)
+        result["ckd"] = f"ХБП {m.group(1)}"
 
-    # ХСН — строка
-    m = re.search(r"(?i)(ХСН\s*\d[АБ]?,?\s*ФК\s*\d)", segment)
+    # ХСН — полная форма или аббревиатура
+    m = re.search(
+        r"(?i)(?:ХСН\s*\d[АБ]?(?:,?\s*ФК\s*\d)?"
+        r"|хроническ\w+\s+сердечн\w+\s+недостаточн\w+\s*\d[АБ]?"
+        r"(?:,?\s*функциональн\w+\s+класс\s*\d)?)",
+        segment,
+    )
     if m:
-        result["hf"] = m.group(1)
-    else:
-        m = re.search(r"(?i)(ХСН\s*[\dАБФК,\s]+)", segment)
-        if m:
-            result["hf"] = m.group(1).strip().rstrip(",")
+        result["hf"] = m.group(0).strip().rstrip(",")
 
     # Тип ОКС
     s = segment.lower()
@@ -128,15 +185,22 @@ def extract_diagnosis(segment: str) -> dict:
 
     # Бинарные — через has_positive
     result["art_hyper"] = has_positive(
-        segment, r"гипертоническая\s+болезнь|артериальная\s+гипертензия|\bГБ\b"
+        segment,
+        r"гипертоническая\s+болезнь|артериальная\s+гипертензия|\bГБ\b",
     )
     result["atr_fibril"] = has_positive(
         segment, r"фибрилляция\s+предсердий|трепетание\s+предсердий"
     )
-    result["copd"] = has_positive(segment, r"ХОБЛ")
-    result["dm"] = has_positive(segment, r"сахарный\s+диабет")
+    result["copd"] = has_positive(
+        segment,
+        r"ХОБЛ|хроническ\w+\s+обструктивн\w+\s+болезн\w+\s+лёгк\w*"
+        r"|хроническ\w+\s+обструктивн\w+\s+болезн\w+\s+легк\w*",
+    )
+    result["dm"] = has_positive(
+        segment, r"сахарн\w+\s+диабет"
+    )
     result["tlt"] = has_positive(
-        segment, r"тромболизис|системный\s+тромболизис"
+        segment, r"тромболизис|системн\w+\s+тромболизис"
     )
 
     return result
@@ -149,40 +213,51 @@ def extract_admission_exam(segment: str) -> dict:
         "spo2": "не указано", "weight": "не указано",
     }
 
+    # Пульс при первичном осмотре
     m = re.search(r"(?i)пульс\s+(\d{2,3})", segment)
     if m:
         result["bpm"] = m.group(1)
 
+    # Масса тела
     m = re.search(r"(?i)масса\s+тела\s+(\d{2,3})", segment)
     if m:
         result["weight"] = m.group(1)
 
+    # ЧДД
     m = re.search(r"(?i)ЧДД\s+(\d{1,2})", segment)
     if m:
         result["rr"] = m.group(1)
 
+    # SpO2
     m = re.search(r"(?i)SpO2\s+(\d{2,3})", segment)
     if m:
         result["spo2"] = m.group(1)
 
+    # Рост
     m = re.search(r"(?i)рост\s+(\d{3})", segment)
     if m:
         result["height"] = m.group(1)
 
-    m = re.search(r"(?i)ИМТ\s+(\d{1,2}[.,]\d)", segment)
+    # ИМТ — полная форма или аббревиатура
+    m = re.search(
+        r"(?i)(?:ИМТ|индекс\w*\s+массы\s+тела)\s+(\d{1,2}[.,]\d)",
+        segment,
+    )
     if m:
-        result["bmi"] = m.group(1).replace(",", ".")
+        result["bmi"] = _to_float_str(m.group(1))
 
+    # АД
     m = re.search(r"(?i)АД\s+(\d{2,3}/\d{2,3})", segment)
     if m:
         result["bp"] = m.group(1)
 
+    # Курение
     s = segment.lower()
     if "не курит" in s:
         result["smoking"] = "Не курит"
-    elif "бросил" in s:
+    elif re.search(r"бросил\w*|прекратил\w*\s+курить", s):
         result["smoking"] = "Бросил"
-    elif "курит" in s:
+    elif re.search(r"\bкурит\b", s):
         result["smoking"] = "Курит"
 
     return result
@@ -197,10 +272,15 @@ def extract_ecg(segment: str) -> dict:
         "ecg_rythm": "не указано",
     }
 
-    m = re.search(r"(?i)ЧСС\s+(\d{2,3})", segment)
+    # ЧСС / частота сердечных сокращений
+    m = re.search(
+        r"(?i)(?:ЧСС|частота\s+сердечных\s+сокращений)\s+(\d{2,3})",
+        segment,
+    )
     if m:
         result["ecg_bpm"] = m.group(1)
 
+    # Ритм
     s = segment.lower()
     if "фибрилляция предсердий" in s or "фибрилляции предсердий" in s:
         result["ecg_rythm"] = "фибрилляция предсердий"
@@ -210,11 +290,14 @@ def extract_ecg(segment: str) -> dict:
     # Элевация ST — с negation detection
     result["ecg_elevation"] = has_positive(
         segment,
-        r"элевац|подъём\s+ST|подъем\s+ST|подъём\s+сегмента\s+ST"
+        r"элевац|подъём\s+ST|подъем\s+ST|подъём\s+сегмента\s+ST",
     )
 
-    # АВ-блокада — через has_positive
-    result["ecg_avb"] = has_positive(segment, r"АВ-блокада|AV-блокада")
+    # АВ-блокада — полная форма или аббревиатура
+    result["ecg_avb"] = has_positive(
+        segment,
+        r"АВ-?блокад\w*|AV-?блокад\w*|атриовентрикулярн\w+\s+блокад\w*",
+    )
 
     return result
 
@@ -226,23 +309,41 @@ def extract_echo(segment: str) -> dict:
         "echo_zone": "не указано",
     }
 
-    m = re.search(r"(?i)ФВ\s+ЛЖ\s+(\d{1,3})", segment)
+    # ФВ — "ФВ ЛЖ 45" или "фракция выброса левый желудочек 43"
+    m = re.search(
+        r"(?i)(?:ФВ\s+ЛЖ|фракци\w+\s+выброса(?:\s+лев\w+\s+желудочк\w*)?)\s+(\d{1,3})",
+        segment,
+    )
     if m:
         result["echo_ef"] = m.group(1)
 
-    m = re.search(r"(?i)КДР\s+ЛЖ\s+(\d{2})", segment)
+    # КДР ЛЖ — "КДР ЛЖ 50" или "конечный диастолический размер ... 50"
+    m = re.search(
+        r"(?i)(?:КДР\s+ЛЖ|конечн\w+\s+диастолическ\w+\s+размер\w*"
+        r"(?:\s+лев\w+\s+желудочк\w*)?)\s+(\d{2})",
+        segment,
+    )
     if m:
         result["echo_lvd"] = m.group(1)
 
-    m = re.search(r"(?i)ЛП\s+(\d{2})", segment)
+    # ЛП — "ЛП 43" или "левое предсердие 43"
+    m = re.search(
+        r"(?i)(?:ЛП|лев\w+\s+предсерди\w*)\s+(\d{2})",
+        segment,
+    )
     if m:
         result["echo_lvd_2"] = m.group(1)
 
-    m = re.search(r"(?i)(митральная\s+регургитация\s+\d\s*ст\.?)", segment)
+    # Митральная регургитация
+    m = re.search(
+        r"(?i)(митральн\w+\s+регургитаци\w+\s+\d\s*ст\.?)",
+        segment,
+    )
     if m:
         result["echo_mr"] = m.group(1).strip()
 
-    m = re.search(r"(?i)(гипокинез\s+\S+\s+стенки)", segment)
+    # Зона гипокинеза
+    m = re.search(r"(?i)(гипокинез\w*\s+\S+\s+стенк\w*)", segment)
     if m:
         result["echo_zone"] = m.group(1).strip()
 
@@ -256,9 +357,29 @@ def extract_xray(segment: str) -> dict:
     if m:
         result["rg_date"] = m.group(1)
 
-    m = re.search(r"(?i)(признаки\s+венозного\s+застоя[^.\n]*)", segment)
-    if m and "не получено" not in m.group(1).lower():
-        result["rg_pc"] = m.group(1).strip()
+    # rg_pc — положительные формулировки; отрицания отсекаем
+    m = re.search(
+        r"(?i)(признак\w*\s+венозн\w+\s+застоя[^.\n]*"
+        r"|венозн\w+\s+застой[^.\n]*"
+        r"|признак\w*\s+отёка\s+лёгк\w*[^.\n]*"
+        r"|признак\w*\s+отека\s+легк\w*[^.\n]*)",
+        segment,
+    )
+    if m:
+        fragment = m.group(1).strip()
+        low = fragment.lower()
+        # Отрицание внутри фрагмента — отсекаем
+        if not re.search(
+            r"не\s+(выявлен|обнаружен|получен|отмеч|определ)", low
+        ):
+            # Отрицание до фразы — тоже отсекаем
+            before = segment[max(0, m.start() - 60):m.start()].lower()
+            if not re.search(
+                r"(не\s+(выявлен|обнаружен|получен|отмеч|определ)"
+                r"|данных\s+за[^.]*не|отсутств)",
+                before,
+            ):
+                result["rg_pc"] = fragment
 
     return result
 
@@ -271,8 +392,10 @@ def extract_ca(segment: str) -> dict:
 
     kag_names = r"(?:каг|коронарографи\w*|коронароангиографи\w*|ангиографи\w*\s+коронарн\w*)"
 
-    # Дата КАГ — привязана к КАГ, а не просто "первая дата"
-    m = re.search(rf"(?i){kag_names}\s+от\s+(\d{{2}}\.\d{{2}}\.\d{{4}})", segment)
+    # Дата КАГ — привязана к КАГ
+    m = re.search(
+        rf"(?i){kag_names}\s+от\s+(\d{{2}}\.\d{{2}}\.\d{{4}})", segment
+    )
     if m:
         result["ca_date"] = m.group(1)
     else:
@@ -281,17 +404,22 @@ def extract_ca(segment: str) -> dict:
             result["ca_date"] = m.group(1)
 
     # 1. Отказ
-    if re.search(r"(?i)отказ\w*|не\s+выполнена|пациент\w*\s+отказал\w*", segment):
+    if re.search(
+        r"(?i)отказ\w*|не\s+выполнен\w*|пациент\w*\s+отказал\w*"
+        r"|предложенн\w+\s+коронарографи\w+\s+не\s+выполнен\w*",
+        segment,
+    ):
         result["ca_fact"] = "R"
+        result["ca_date"] = "не указано"
         return result
 
-    # 2. Выполнение — только явные маркеры про КАГ
+    # 2. Выполнение — только явные маркеры
     performed_patterns = [
-        rf"(?i){kag_names}\s+выполнен\w*",                       # "КАГ выполнена"
-        rf"(?i)выполнен\w*\s+{kag_names}",                       # "выполнена КАГ"
-        rf"(?i)проведен\w*\s+{kag_names}",                       # "проведена коронарография"
-        rf"(?i){kag_names}\s+от\s+\d{{2}}\.\d{{2}}\.\d{{4}}",    # "КАГ от 01.01.2020"
-        rf"(?i)по\s+(?:данным|результатам)\s+{kag_names}",       # "по данным КАГ"
+        rf"(?i){kag_names}\s+выполнен\w*",
+        rf"(?i)выполнен\w*\s+{kag_names}",
+        rf"(?i)проведен\w*\s+{kag_names}",
+        rf"(?i){kag_names}\s+от\s+\d{{2}}\.\d{{2}}\.\d{{4}}",
+        rf"(?i)по\s+(?:данным|результатам)\s+{kag_names}",
     ]
     if any(re.search(p, segment) for p in performed_patterns):
         result["ca_fact"] = "Y"
@@ -337,31 +465,44 @@ def extract_labs(segment: str) -> dict:
 
     m = re.search(r"(?i)глюкоза\s+(\d{1,2}[.,]\d)", segment)
     if m:
-        result["glu"] = m.group(1).replace(",", ".")
+        result["glu"] = _to_float_str(m.group(1))
 
     m = re.search(r"(?i)гемоглобин\s+(\d{2,3})", segment)
     if m:
         result["hb"] = m.group(1)
 
-    m = re.search(r"(?i)ХС-ЛПНП\s+(\d{1,2}[.,]\d)", segment)
+    # ЛПНП — полная форма или аббревиатура
+    m = re.search(
+        r"(?i)(?:ХС-?ЛПНП|холестерин\w*\s+липопротеинов\s+низкой\s+плотности)"
+        r"\s+(\d{1,2}[.,]\d)",
+        segment,
+    )
     if m:
-        result["ldl"] = m.group(1).replace(",", ".")
+        result["ldl"] = _to_float_str(m.group(1))
 
+    # Лейкоциты — до/без ×10⁹/л
     m = re.search(r"(?i)лейкоциты\s+(\d{1,2}[.,]\d)", segment)
     if m:
-        result["leucocytes"] = m.group(1).replace(",", ".")
+        result["leucocytes"] = _to_float_str(m.group(1))
 
+    # Тромбоциты — до ×10⁹/л
     m = re.search(r"(?i)тромбоциты\s+(\d{2,3})", segment)
     if m:
         result["thrombocytes"] = m.group(1)
 
+    # Общий холестерин
     m = re.search(r"(?i)общий\s+холестерин\s+(\d{1,2}[.,]\d)", segment)
     if m:
-        result["tot_chol"] = m.group(1).replace(",", ".")
+        result["tot_chol"] = _to_float_str(m.group(1))
 
-    if re.search(r"(?i)тропониновый\s+тест\s+—\s+положительный", segment):
+    # Тропонин — любое тире
+    if re.search(
+        r"(?i)тропонинов\w+\s+тест\s*[—–-]\s*положительн\w*", segment
+    ):
         result["card_trop"] = "положительный"
-    elif re.search(r"(?i)тропониновый\s+тест\s+—\s+отрицательный", segment):
+    elif re.search(
+        r"(?i)тропонинов\w+\s+тест\s*[—–-]\s*отрицательн\w*", segment
+    ):
         result["card_trop"] = "отрицательный"
 
     return result
@@ -379,17 +520,17 @@ def extract_meds(segment: str) -> dict:
     for line in lines:
         low = line.lower()
         if re.search(r"ацетилсалициловая|аспирин|\bаск\b", low):
-            result["aspirin"] = line
+            result["aspirin"] = _clean_med_line(line)
         elif re.search(r"клопидогрел|тикагрелор|прасугрел", low):
-            result["2_aag"] = line
+            result["2_aag"] = _clean_med_line(line)
         elif re.search(r"периндоприл|рамиприл|лозартан|эналаприл|валсартан", low):
-            result["ace_ing_sartan"] = line
+            result["ace_ing_sartan"] = _clean_med_line(line)
         elif re.search(r"апиксабан|ривароксабан|варфарин|дабигатран", low):
-            result["anticoagulant"] = line
+            result["anticoagulant"] = _clean_med_line(line)
         elif re.search(r"бисопролол|метопролол|карведилол|небиволол", low):
-            result["bb"] = line
+            result["bb"] = _clean_med_line(line)
         elif re.search(r"аторвастатин|розувастатин|симвастатин", low):
-            result["statin"] = line
+            result["statin"] = _clean_med_line(line)
 
     return result
 
