@@ -113,7 +113,12 @@ def format_ner_value(key: str, raw_text: str) -> str:
         match = re.search(r'[A-ZА-Я]\d{2}(?:\.\d)?', raw_text, re.IGNORECASE)
         if match: return match.group(0)
 
+    # Очистка поля ритма ЭКГ от слова "ритм"
+    if key == "ecg_rythm":
+        raw_text = re.sub(r'(?i)ритм\s*', '', raw_text)
+
     return raw_text.strip(".,;: ")
+
 
 def load_ner_pipeline():
     if not MODEL_PATH.exists():
